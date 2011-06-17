@@ -1,0 +1,11 @@
+  ---
+  About
+  ---
+
+About ${artifactId}
+
+  This library provides simplified access to Cassandra clusters, including
+direct support for reading and writing large files.
+
+  For more information, see {{{./usage.html}Usage}} and
+{{{./apidocs/index.html}Javadocs}}

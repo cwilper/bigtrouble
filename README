@@ -1,0 +1,14 @@
+Big Trouble - Source Code
+=========================
+
+Website
+-------
+
+    http://cwilper.github.com/bigtrouble/
+
+Build Instructions
+------------------
+
+To build all project artifacts and install them in your local Maven repository:
+
+    mvn clean install
