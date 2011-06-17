@@ -42,6 +42,13 @@ public enum Consistency {
      * datacenter.
      */
     EACH_QUORUM,
+
+    /**
+     * For writes, this level ensures it has been written to all replicas.
+     * For reads, this will query all replicas and return the most recent
+     * one after all replicas have replied. Any unresponsive replicas will
+     * fail the operation (for writes or reads).
+     */
     ALL;
 
     /**

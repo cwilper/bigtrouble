@@ -29,7 +29,7 @@ public class ConnectionConfig {
     private int fileChunkSize;
 
     /**
-     * Creates a configuration for use with the given keystore, with default
+     * Creates a configuration for use with the given keyspace, with default
      * values and undefined credentials.
      *
      * @param keyspace the keyspace to which the connection is tied.
