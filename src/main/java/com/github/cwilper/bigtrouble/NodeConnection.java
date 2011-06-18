@@ -102,12 +102,12 @@ public class NodeConnection implements Connection {
     }
 
     @Override
-    public boolean addRow(String columnFamily, String key, Map<String, String> columns) {
+    public boolean addRecord(String columnFamily, String key, Map<String, String> columns) {
         return false;
     }
 
     @Override
-    public Map<String, String> getRow(String columnFamily, String key) {
+    public Map<String, String> getRecord(String columnFamily, String key) {
         return null;
     }
 

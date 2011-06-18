@@ -34,40 +34,40 @@ public interface Connection {
     InputStream getFileContent(String columnFamily, String key);
 
     /**
-     * Adds a row.
+     * Adds a record.
      *
-     * @param columnFamily the column family in which to store the row.
-     * @param key the unique id of the row within the column family.
-     * @param columns one or more name-value pairs that comprise the row.
-     * @return true if the row was successfully added, false if the key
+     * @param columnFamily the column family in which to store the record.
+     * @param key the unique id of the record within the column family.
+     * @param columns one or more name-value pairs that comprise the record.
+     * @return true if the record was successfully added, false if the key
      *         was already in use in the column family.
      */
-    boolean addRow(String columnFamily, String key, Map<String, String> columns);
+    boolean addRecord(String columnFamily, String key, Map<String, String> columns);
 
     /**
-     * Gets a row.
+     * Gets a record.
      *
      * @param columnFamily the column family in which it is stored.
-     * @param key the unique id of the row within the column family.
-     * @return one or more name-value pairs that comprise the row, or
-     *         <code>null</code> if the row does not exist.
+     * @param key the unique id of the record within the column family.
+     * @return one or more name-value pairs that comprise the record, or
+     *         <code>null</code> if the record does not exist.
      */
-    Map<String, String> getRow(String columnFamily, String key);
+    Map<String, String> getRecord(String columnFamily, String key);
 
     /**
-     * Tells whether a row or file exists.
+     * Tells whether a record or file exists.
      *
      * @param columnFamily the column family in which to look.
-     * @param key the unique id of the row or file within the column family.
+     * @param key the unique id of the record or file within the column family.
      * @return true if it exists, false otherwise.
      */
     boolean exists(String columnFamily, String key);
 
     /**
-     * Deletes a row or file.
+     * Deletes a record or file.
      *
-     * @param columnFamily the column family in which it is stored.
-     * @param key the unique id of the row or file within the column family.
+     * @param columnFamily the column family in which the record or file is stored.
+     * @param key the unique id of the record or file within the column family.
      */
     void delete(String columnFamily, String key);
 
