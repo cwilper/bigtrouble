@@ -26,6 +26,7 @@ import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -203,9 +204,44 @@ public class NodeConnection implements Connection {
     }
 
     @Override
-    public void addFile(String columnFamily, String key, InputStream in, Map<String, String> metadata) {
+    public void addFile(String columnFamily, String key, InputStream in,
+                        Map<String, String> columns) {
         setKeyspace();
-        // TODO: Implement
+        if (columns == null) {
+            columns = new HashMap<String, String>();
+        }
+        long timestamp = System.currentTimeMillis();
+        long byteCount = 0;
+        try {
+            // first add the chunks as rows (key = fileKey-chunk-0, data=byte[])
+            byte[] buffer = new byte[config.getFileChunkSize()];
+            int bytesRead = 0;
+            int chunkNum = 0;
+            do {
+                bytesRead = in.read(buffer, 0, buffer.length);
+                if (bytesRead > 0) {
+                    ByteBuffer chunkKey = buffer(key + "-chunk-" + chunkNum);
+                    Column column = new Column();
+                    column.setName(buffer("data"));
+                    column.setValue(ByteBuffer.wrap(buffer, 0, bytesRead));
+                    column.setTimestamp(timestamp);
+                    client.insert(buffer(key + "-chunk-" + chunkNum),
+                            parent(columnFamily),
+                            column,
+                            config.getWriteConsistency().getConsistencyLevel());
+                    chunkNum++;
+                    byteCount += bytesRead;
+                }
+            } while (bytesRead >= 0);
+            // then add a row for file metadata
+            columns.put("byteCount", "" + byteCount);
+            columns.put("chunkSize", "" + config.getFileChunkSize());
+            addRecord(columnFamily, key, columns);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally{
+            closeQuietly(in);
+        }
     }
 
     @Override
@@ -372,5 +408,12 @@ public class NodeConnection implements Connection {
         ColumnPath path = new ColumnPath();
         path.setColumn_family(columnFamily);
         return path;
+    }
+
+    private static void closeQuietly(InputStream in) {
+        try {
+            in.close();
+        } catch (Exception e) {
+        }
     }
 }
