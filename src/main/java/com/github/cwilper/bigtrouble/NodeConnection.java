@@ -10,9 +10,9 @@ import org.apache.cassandra.thrift.ColumnDef;
 import org.apache.cassandra.thrift.ColumnOrSuperColumn;
 import org.apache.cassandra.thrift.ColumnParent;
 import org.apache.cassandra.thrift.ColumnPath;
-import org.apache.cassandra.thrift.ConsistencyLevel;
+import org.apache.cassandra.thrift.KeyRange;
+import org.apache.cassandra.thrift.KeySlice;
 import org.apache.cassandra.thrift.KsDef;
-import org.apache.cassandra.thrift.NotFoundException;
 import org.apache.cassandra.thrift.SlicePredicate;
 import org.apache.cassandra.thrift.SliceRange;
 import org.apache.thrift.TException;
@@ -27,8 +27,10 @@ import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * A connection to a single node in a Cassandra cluster.
@@ -51,8 +53,6 @@ public class NodeConnection implements Connection {
 
     private final TTransport transport;
     private final Cassandra.Client client;
-    private final ConsistencyLevel readConsistency;
-    private final ConsistencyLevel writeConsistency;
 
     private boolean keyspaceIsSet = false;
 
@@ -92,8 +92,6 @@ public class NodeConnection implements Connection {
         } catch (TException e) {
             throw new RuntimeException(e);
         }
-        this.readConsistency = config.getReadConsistency().getConsistencyLevel();
-        this.writeConsistency = config.getWriteConsistency().getConsistencyLevel();
     }
 
     /**
@@ -115,12 +113,13 @@ public class NodeConnection implements Connection {
     }
 
     @Override
-    public boolean keyspaceExists() {
+    public Set<String> keyspaces() {
+        Set<String> set = new HashSet<String>();
         try {
-            client.describe_keyspace(config.getKeyspace());
-            return true;
-        } catch (NotFoundException e) {
-            return false;
+            for (KsDef ksDef: client.describe_keyspaces()) {
+                set.add(ksDef.getName());
+            }
+            return set;
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -153,16 +152,15 @@ public class NodeConnection implements Connection {
     }
 
     @Override
-    public boolean columnFamilyExists(String name) {
+    public Set<String> columnFamilies() {
         setKeyspace();
+        Set<String> set = new HashSet<String>();
         try {
             KsDef ksDef = client.describe_keyspace(config.getKeyspace());
             for (CfDef cfDef: ksDef.getCf_defs()) {
-                if (cfDef.name.equals(name)) {
-                    return true;
-                }
+                set.add(cfDef.getName());
             }
-            return false;
+            return set;
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -207,11 +205,13 @@ public class NodeConnection implements Connection {
     @Override
     public void addFile(String columnFamily, String key, InputStream in, Map<String, String> metadata) {
         setKeyspace();
+        // TODO: Implement
     }
 
     @Override
     public InputStream getFileContent(String columnFamily, String key) {
         setKeyspace();
+        // TODO: Implement
         return null;
     }
 
@@ -219,7 +219,7 @@ public class NodeConnection implements Connection {
     public void deleteFile(String columnFamily, String key) {
         setKeyspace();
         try {
-
+            // TODO: Implement
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -248,15 +248,51 @@ public class NodeConnection implements Connection {
     public Map<String, String> getRecord(String columnFamily, String key) {
         setKeyspace();
         try {
-            Map<String, String> map = new HashMap<String, String>();
-            List<ColumnOrSuperColumn> list = client.get_slice(
+            return map(client.get_slice(
                     buffer(key), parent(columnFamily), ALL_COLUMNS,
-                    config.getReadConsistency().getConsistencyLevel());
-            for (ColumnOrSuperColumn c: list) {
-                Column column = c.getColumn();
-                map.put(string(column.getName()), string(column.getValue()));
-            }
-            return map;
+                    config.getReadConsistency().getConsistencyLevel()));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static Map<String, String> map(List<ColumnOrSuperColumn> list) {
+        Map<String, String> map = new HashMap<String, String>();
+        for (ColumnOrSuperColumn c: list) {
+            Column column = c.getColumn();
+            map.put(string(column.getName()), string(column.getValue()));
+        }
+        return map;
+    }
+
+    @Override
+    public void forEachRecord(String columnFamily, RecordFunction function) {
+        setKeyspace();
+        try {
+            List<KeySlice> list;
+            String lastKey = "";
+            boolean doNext = false;
+            do {
+                KeyRange keyRange = new KeyRange();
+                keyRange.setStart_key(buffer(lastKey));
+                keyRange.setEnd_key(new byte[0]);
+                keyRange.setCount(config.getRecordBatchSize());
+                list = client.get_range_slices(
+                        parent(columnFamily),
+                        ALL_COLUMNS,
+                        keyRange,
+                        config.getReadConsistency().getConsistencyLevel());
+                for (KeySlice keySlice: list) {
+                    String key = string(keySlice.getKey());
+                    if (!lastKey.equals(key)) {
+                        lastKey = string(keySlice.getKey());
+                        List<ColumnOrSuperColumn> columns = keySlice.getColumns();
+                        if (columns.size() > 0) { // skip deleted rows
+                            doNext = function.execute(lastKey, map(columns));
+                        }
+                    }
+                }
+            } while (list.size() > 1 && doNext);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -266,7 +302,6 @@ public class NodeConnection implements Connection {
     public boolean exists(String columnFamily, String key) {
         setKeyspace();
         try {
-            Map<String, String> map = new HashMap<String, String>();
             return client.get_count(
                     buffer(key), parent(columnFamily), ALL_COLUMNS,
                     config.getReadConsistency().getConsistencyLevel()) > 0;

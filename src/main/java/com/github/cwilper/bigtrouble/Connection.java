@@ -2,6 +2,7 @@ package com.github.cwilper.bigtrouble;
 
 import java.io.InputStream;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * A single-threaded connection to a Cassandra node or cluster.
@@ -9,11 +10,11 @@ import java.util.Map;
 public interface Connection {
 
     /**
-     * Tells whether the keyspace exists.
+     * Gets all keyspace names.
      *
-     * @return true if it exists, false otherwise.
+     * @return the set of names.
      */
-    boolean keyspaceExists();
+    Set<String> keyspaces();
 
     /**
      * Adds the keyspace.
@@ -30,12 +31,11 @@ public interface Connection {
     void deleteKeyspace();
 
     /**
-     * Tells whether a column family exists.
+     * Gets all column family names in this keyspace.
      *
-     * @param name the name of the column family.
-     * @return true if it exists, false otherwise.
+     * @return the set of names.
      */
-    boolean columnFamilyExists(String name);
+    Set<String> columnFamilies();
 
     /**
      * Adds a column family.
@@ -107,6 +107,16 @@ public interface Connection {
      *         <code>null</code> if the record does not exist.
      */
     Map<String, String> getRecord(String columnFamily, String key);
+
+    /**
+     * Iterates records in a column family, passing each to the given function.
+     * All records will be iterated (in no particular order). The function can
+     * cause iteration to complete early by returning <code>false</code>.
+     *
+     * @param columnFamily the column family whose records should be iterated.
+     * @param function the function to execute.
+     */
+    void forEachRecord(String columnFamily, RecordFunction function);
 
     /**
      * Deletes a record.

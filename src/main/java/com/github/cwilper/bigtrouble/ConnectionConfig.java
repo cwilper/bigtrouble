@@ -20,6 +20,14 @@ public class ConnectionConfig {
      */
     public static final int DEFAULT_FILE_CHUNK_SIZE = 8 * 1024 * 1024;
 
+    /**
+     * The default maximum number of records to retrieve at once via
+     * Connection.forEachRecord.
+     */
+    public static final int DEFAULT_RECORD_BATCH_SIZE = 5;
+
+
+
     private final String keyspace;
 
     private String username;
@@ -27,6 +35,7 @@ public class ConnectionConfig {
     private Consistency readConsistency;
     private Consistency writeConsistency;
     private int fileChunkSize;
+    private int recordBatchSize;
 
     /**
      * Creates a configuration for use with the given keyspace, with default
@@ -39,6 +48,7 @@ public class ConnectionConfig {
         this.readConsistency = DEFAULT_READ_CONSISTENCY;
         this.writeConsistency = DEFAULT_WRITE_CONSISTENCY;
         this.fileChunkSize = DEFAULT_FILE_CHUNK_SIZE;
+        this.recordBatchSize = DEFAULT_RECORD_BATCH_SIZE;
     }
 
     /**
@@ -102,7 +112,7 @@ public class ConnectionConfig {
      */
     public void setReadConsistency(Consistency readConsistency) {
         if (readConsistency.equals(Consistency.ANY)) {
-            throw new IllegalArgumentException();
+            throw new IllegalArgumentException("ANY is not a valid read consistency level");
         }
         this.readConsistency = readConsistency;
     }
@@ -143,6 +153,29 @@ public class ConnectionConfig {
      */
     public void setFileChunkSize(int fileChunkSize) {
         this.fileChunkSize = fileChunkSize;
+    }
+
+    /**
+     * Gets the maximum number of records to that should be retrieved from
+     * the cluster at once (in memory) when calling Connection.forEachRecord.
+     *
+     * @return the maximum number of records to retrieve at once.
+     */
+    public int getRecordBatchSize() {
+        return recordBatchSize;
+    }
+
+    /**
+     * Sets the maximum number of records to that should be retrieved from
+     * the cluster at once (in memory) when calling Connection.forEachRecord.
+     *
+     * @param recordBatchSize maximum number of records to retrieve at once.
+     */
+    public void setRecordBatchSize(int recordBatchSize) {
+        if (recordBatchSize < 2) {
+            throw new IllegalArgumentException("Record batch size must be at least 2");
+        }
+        this.recordBatchSize = recordBatchSize;
     }
 
 }
