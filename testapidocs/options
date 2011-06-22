@@ -1,0 +1,24 @@
+-classpath
+'/Users/cwilper/work/cwilper/bigtrouble/target/classes:/Users/cwilper/work/cwilper/bigtrouble/target/test-classes:/Users/cwilper/.m2/repository/com/github/cwilper/ttff/1.0.0/ttff-1.0.0.jar:/Users/cwilper/.m2/repository/ch/qos/logback/logback-core/0.9.26/logback-core-0.9.26.jar:/Users/cwilper/.m2/repository/commons-io/commons-io/2.0.1/commons-io-2.0.1.jar:/Users/cwilper/.m2/repository/commons-lang/commons-lang/2.4/commons-lang-2.4.jar:/Users/cwilper/.m2/repository/org/apache/thrift/libthrift/0.6.1/libthrift-0.6.1.jar:/Users/cwilper/.m2/repository/ch/qos/logback/logback-classic/0.9.26/logback-classic-0.9.26.jar:/Users/cwilper/.m2/repository/org/slf4j/slf4j-api/1.6.1/slf4j-api-1.6.1.jar:/Users/cwilper/.m2/repository/junit/junit/4.8.2/junit-4.8.2.jar:/Users/cwilper/.m2/repository/org/apache/cassandra/cassandra-thrift/0.8.0/cassandra-thrift-0.8.0.jar'
+-encoding
+'UTF-8'
+-protected
+-sourcepath
+'/Users/cwilper/work/cwilper/bigtrouble/src/test/java'
+-author
+-bottom
+'Copyright &#169; 2011 <a href="http://duraspace.org/">DuraSpace</a>. All Rights Reserved.'
+-charset
+'UTF-8'
+-d
+'/Users/cwilper/work/cwilper/bigtrouble/target/site/testapidocs'
+-docencoding
+'UTF-8'
+-doctitle
+'Big Trouble 1.0.0 Test API'
+-link
+'http://java.sun.com/javase/6/docs/api'
+-use
+-version
+-windowtitle
+'Big Trouble 1.0.0 Test API'
