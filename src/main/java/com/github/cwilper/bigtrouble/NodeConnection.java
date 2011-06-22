@@ -1,5 +1,6 @@
 package com.github.cwilper.bigtrouble;
 
+import com.github.cwilper.ttff.AbstractSource;
 import org.apache.cassandra.thrift.AuthenticationException;
 import org.apache.cassandra.thrift.AuthenticationRequest;
 import org.apache.cassandra.thrift.AuthorizationException;
@@ -20,13 +21,15 @@ import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.transport.TFramedTransport;
 import org.apache.thrift.transport.TSocket;
 import org.apache.thrift.transport.TTransport;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.annotation.PreDestroy;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -39,6 +42,8 @@ import java.util.Set;
 public class NodeConnection implements Connection {
 
     private static final SlicePredicate ALL_COLUMNS = new SlicePredicate();
+
+    private static final Logger logger = LoggerFactory.getLogger(NodeConnection.class);
 
     static {
         SliceRange range = new SliceRange();
@@ -71,6 +76,7 @@ public class NodeConnection implements Connection {
                           String host,
                           int port)
             throws LoginException {
+        logger.trace("Instantiating");
         this.host = host;
         this.port = port;
         this.config = config;
@@ -115,6 +121,7 @@ public class NodeConnection implements Connection {
 
     @Override
     public Set<String> keyspaces() {
+        logger.trace("Listing keyspaces");
         Set<String> set = new HashSet<String>();
         try {
             for (KsDef ksDef: client.describe_keyspaces()) {
@@ -129,6 +136,7 @@ public class NodeConnection implements Connection {
     @Override
     public void addKeyspace(ReplicationStrategy strategy,
                             Map<String, String> options) {
+        logger.trace("Adding keyspace");
         KsDef def = new KsDef();
         def.setStrategy_class(strategy.getClassName());
         def.setName(config.getKeyspace());
@@ -145,6 +153,7 @@ public class NodeConnection implements Connection {
 
     @Override
     public void deleteKeyspace() {
+        logger.trace("Deleting keyspace");
         try {
             client.system_drop_keyspace(config.getKeyspace());
         } catch (Exception e) {
@@ -154,6 +163,7 @@ public class NodeConnection implements Connection {
 
     @Override
     public Set<String> columnFamilies() {
+        logger.trace("Listing column families");
         setKeyspace();
         Set<String> set = new HashSet<String>();
         try {
@@ -169,6 +179,7 @@ public class NodeConnection implements Connection {
 
     @Override
     public void addColumnFamily(String name, String... binaryColumns) {
+        logger.trace("Adding column family: {}", name);
         setKeyspace();
         CfDef cfDef = new CfDef();
         cfDef.setKeyspace(config.getKeyspace());
@@ -195,6 +206,7 @@ public class NodeConnection implements Connection {
 
     @Override
     public void deleteColumnFamily(String name) {
+        logger.trace("Deleting column family: {}", name);
         setKeyspace();
         try {
             client.system_drop_column_family(name);
@@ -206,6 +218,7 @@ public class NodeConnection implements Connection {
     @Override
     public void addFile(String columnFamily, String key, InputStream in,
                         Map<String, String> columns) {
+        logger.trace("Adding file: {} to column family: {}", key, columnFamily);
         setKeyspace();
         if (columns == null) {
             columns = new HashMap<String, String>();
@@ -220,12 +233,13 @@ public class NodeConnection implements Connection {
             do {
                 bytesRead = in.read(buffer, 0, buffer.length);
                 if (bytesRead > 0) {
-                    ByteBuffer chunkKey = buffer(key + "-chunk-" + chunkNum);
                     Column column = new Column();
-                    column.setName(buffer("data"));
+                    column.setName(buffer("bytes"));
                     column.setValue(ByteBuffer.wrap(buffer, 0, bytesRead));
                     column.setTimestamp(timestamp);
-                    client.insert(buffer(key + "-chunk-" + chunkNum),
+                    String chunkKey = key + "-chunk-" + chunkNum;
+                    logger.trace("Adding chunk: {} to column family: {}", chunkKey, columnFamily);
+                    client.insert(buffer(chunkKey),
                             parent(columnFamily),
                             column,
                             config.getWriteConsistency().getConsistencyLevel());
@@ -245,24 +259,65 @@ public class NodeConnection implements Connection {
     }
 
     @Override
-    public InputStream getFileContent(String columnFamily, String key) {
+    public InputStream getFileContent(final String columnFamily, final String key) {
+        logger.trace("Getting file: {} from column family: {}", key, columnFamily);
         setKeyspace();
-        // TODO: Implement
-        return null;
+        final long chunkCount = getFileInfo(columnFamily, key)[2];
+        return new ChunkedInputStream(new AbstractSource<byte[]>() {
+            private long chunkNum;
+            @Override
+            protected byte[] computeNext() throws IOException {
+                if (chunkNum == chunkCount) {
+                    return endOfData();
+                } else {
+                    long i = chunkNum;
+                    chunkNum++;
+                    return getColumn(columnFamily,
+                                     key + "-chunk-" + i,
+                                     "bytes").getValue();
+                }
+            }
+        });
     }
 
-    @Override
-    public void deleteFile(String columnFamily, String key) {
-        setKeyspace();
+    private Column getColumn(String columnFamily, String key, String name) {
         try {
-            // TODO: Implement
+            ColumnPath path = path(columnFamily);
+            path.setColumn(buffer(name));
+            ColumnOrSuperColumn result = client.get(buffer(key),
+                    path, config.getReadConsistency().getConsistencyLevel());
+            return result.getColumn();
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
     @Override
+    public void deleteFile(String columnFamily, String key) {
+        logger.trace("Deleting file: {} from column family: {}", key, columnFamily);
+        setKeyspace();
+        long[] fileInfo = getFileInfo(columnFamily, key);
+        for (int i = 0; i < fileInfo[2]; i++) {
+            deleteRecord(columnFamily, key + "-chunk-" + i);
+        }
+        deleteRecord(columnFamily, key);
+    }
+
+    // [0] = byteCount, [1] = chunkSize, [2] = chunkCount
+    private long[] getFileInfo(String columnFamily, String key) {
+        Map<String, String> columns = getRecord(columnFamily, key);
+        long byteCount = Long.parseLong(columns.get("byteCount"));
+        long chunkSize = Long.parseLong(columns.get("chunkSize"));
+        long chunkCount = byteCount / chunkSize;
+        if (byteCount % chunkSize != 0) {
+            chunkCount++;
+        }
+        return new long[] { byteCount, chunkSize, chunkCount };
+    }
+
+    @Override
     public void addRecord(String columnFamily, String key, Map<String, String> columns) {
+        logger.trace("Adding record: {} to column family: {}", key, columnFamily);
         setKeyspace();
         ByteBuffer keyBuf = buffer(key);
         long timestamp = System.currentTimeMillis();
@@ -282,6 +337,7 @@ public class NodeConnection implements Connection {
 
     @Override
     public Map<String, String> getRecord(String columnFamily, String key) {
+        logger.trace("Getting record: {} from column family: {}", key, columnFamily);
         setKeyspace();
         try {
             return map(client.get_slice(
@@ -303,6 +359,7 @@ public class NodeConnection implements Connection {
 
     @Override
     public void forEachRecord(String columnFamily, RecordFunction function) {
+        logger.trace("Iterating records in column family: {}", columnFamily);
         setKeyspace();
         try {
             List<KeySlice> list;
@@ -322,9 +379,11 @@ public class NodeConnection implements Connection {
                     String key = string(keySlice.getKey());
                     if (!lastKey.equals(key)) {
                         lastKey = string(keySlice.getKey());
-                        List<ColumnOrSuperColumn> columns = keySlice.getColumns();
-                        if (columns.size() > 0) { // skip deleted rows
-                            doNext = function.execute(lastKey, map(columns));
+                        if (lastKey.indexOf("-chunk-") == -1) { // skip file chunk rows
+                            List<ColumnOrSuperColumn> columns = keySlice.getColumns();
+                            if (columns.size() > 0) { // skip deleted rows
+                                doNext = function.execute(lastKey, map(columns));
+                            }
                         }
                     }
                 }
@@ -336,6 +395,7 @@ public class NodeConnection implements Connection {
 
     @Override
     public boolean exists(String columnFamily, String key) {
+        logger.trace("Checking for: {} in column family: {}", key, columnFamily);
         setKeyspace();
         try {
             return client.get_count(
@@ -348,6 +408,7 @@ public class NodeConnection implements Connection {
 
     @Override
     public void deleteRecord(String columnFamily, String key) {
+        logger.trace("Deleting record: {} in column family: {}", key, columnFamily);
         setKeyspace();
         try {
             client.remove(buffer(key),
@@ -362,6 +423,7 @@ public class NodeConnection implements Connection {
     @Override
     @PreDestroy
     public void close() {
+        logger.trace("Closing");
         try {
             transport.flush();
         } catch (Exception e) {
