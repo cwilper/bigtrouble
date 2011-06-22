@@ -16,6 +16,7 @@ import org.apache.cassandra.thrift.KeySlice;
 import org.apache.cassandra.thrift.KsDef;
 import org.apache.cassandra.thrift.SlicePredicate;
 import org.apache.cassandra.thrift.SliceRange;
+import org.apache.commons.io.IOUtils;
 import org.apache.thrift.TException;
 import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.transport.TFramedTransport;
@@ -254,7 +255,7 @@ public class NodeConnection implements Connection {
         } catch (Exception e) {
             throw new RuntimeException(e);
         } finally{
-            closeQuietly(in);
+            IOUtils.closeQuietly(in);
         }
     }
 
@@ -321,10 +322,10 @@ public class NodeConnection implements Connection {
         setKeyspace();
         ByteBuffer keyBuf = buffer(key);
         long timestamp = System.currentTimeMillis();
-        for (String name: columns.keySet()) {
+        for (Map.Entry<String, String> entry: columns.entrySet()) {
             Column column = new Column();
-            column.setName(buffer(name));
-            column.setValue(buffer(columns.get(name)));
+            column.setName(buffer(entry.getKey()));
+            column.setValue(buffer(entry.getValue()));
             column.setTimestamp(timestamp);
             try {
                 client.insert(keyBuf, parent(columnFamily), column,
@@ -472,10 +473,4 @@ public class NodeConnection implements Connection {
         return path;
     }
 
-    private static void closeQuietly(InputStream in) {
-        try {
-            in.close();
-        } catch (Exception e) {
-        }
-    }
 }

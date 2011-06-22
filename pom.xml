@@ -83,13 +83,22 @@
       <groupId>commons-io</groupId>
       <artifactId>commons-io</artifactId>
       <version>2.0.1</version>
-      <scope>test</scope>
     </dependency>
 
     <dependency>
       <groupId>org.apache.cassandra</groupId>
       <artifactId>cassandra-thrift</artifactId>
       <version>0.8.0</version>
+      <exclusions>                                                                
+        <exclusion>                                                               
+          <groupId>javax.servlet</groupId>
+          <artifactId>servlet-api</artifactId>
+        </exclusion>
+        <exclusion>                                                               
+          <groupId>org.apache.httpcomponents</groupId>
+          <artifactId>httpclient</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
 
     <dependency>
@@ -126,6 +135,25 @@
             </goals>
             <configuration>
               <rules>
+                <bannedDependencies>
+                  <searchTransitive>true</searchTransitive>
+                  <excludes>
+                    <exclude>commons-logging</exclude>
+                    <exclude>log4j:log4j</exclude>
+                    <exclude>org.slf4j:slf4j-jcl</exclude>
+                    <exclude>org.slf4j:slf4j-jdk14</exclude>
+                    <exclude>org.slf4j:slf4j-log4j12</exclude>
+                    <exclude>org.slf4j:slf4j-log4j13</exclude>
+                    <exclude>org.slf4j:slf4j-nop</exclude>
+                    <exclude>org.slf4j:slf4j-simple</exclude>
+                  </excludes>
+                  <message>
+                    This project uses SLF4J for logging only.  All other
+                    logging frameworks and bindings are disallowed.
+                    They may be excluded manually in the dependencyManagement
+                    section.
+                  </message>
+                </bannedDependencies>
                 <requireMavenVersion>
                   <version>(,2.1.0),(2.1.0,2.2.0),(2.2.0,)</version>
                   <message>
