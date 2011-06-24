@@ -1,7 +1,9 @@
 package com.github.cwilper.bigtrouble;
 
 import org.apache.commons.io.IOUtils;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.ByteArrayInputStream;
@@ -28,68 +30,87 @@ public class NodeConnectionTest {
     private static final int RECORD_BATCH_SIZE = 5;
     private static final int FILE_CHUNK_SIZE = 1024 * 1024;
 
-    private NodeConnection newInstance() {
+    private Connection c;
+
+    @Before
+    public void init() throws LoginException {
         ConnectionConfig config = new ConnectionConfig(TEST_KEYSPACE);
         config.setRecordBatchSize(RECORD_BATCH_SIZE);
         config.setFileChunkSize(FILE_CHUNK_SIZE);
-        try {
-            NodeConnection c = new NodeConnection(config, HOST, PORT);
-            // clean up if needed
-            if (c.keyspaces().contains(TEST_KEYSPACE)) {
-                c.deleteKeyspace();
-            }
-            return c;
-        } catch (LoginException e) {
-            throw new RuntimeException(e);
-        }
+        c = new NodeConnection(config, HOST, PORT);
+        c.deleteKeyspace();
     }
 
-    @Test
-    public void instantiate() throws Exception {
-        NodeConnection c = newInstance();
+    @After
+    public void destroy() {
+        c.deleteKeyspace();
         c.close();
     }
 
     @Test
+    public void multiClose() throws Exception {
+        c.close();
+        c.close();
+        init();
+    }
+
+    @Test
     public void addAndDeleteKeyspace() throws Exception {
-        NodeConnection c = newInstance();
         // initially, keyspace does not exist
         Assert.assertFalse(c.keyspaces().contains(TEST_KEYSPACE));
-        addKeyspace(c);
+        Assert.assertTrue(addKeyspace());
         // now it should exist
         Assert.assertTrue(c.keyspaces().contains(TEST_KEYSPACE));
-        try {
-            c.deleteKeyspace();
-            // now it should not exist
-            Assert.assertFalse(c.keyspaces().contains(TEST_KEYSPACE));
-        } finally {
-            c.close();
-        }
+        Assert.assertTrue(c.deleteKeyspace());
+        // now it should not exist
+        Assert.assertFalse(c.keyspaces().contains(TEST_KEYSPACE));
+    }
+
+    @Test
+    public void addExistingKeyspace() throws Exception {
+        Assert.assertTrue(addKeyspace());
+        Assert.assertFalse(addKeyspace());
+    }
+
+    @Test
+    public void deleteNonExistingKeyspace() throws Exception {
+        Assert.assertFalse(c.deleteKeyspace());
     }
 
     @Test
     public void addAndDeleteColumnFamily() throws Exception {
-        NodeConnection c = newInstance();
-        addKeyspace(c);
+        Assert.assertTrue(addKeyspace());
         // column family doesn't exist yet
         Assert.assertFalse(c.columnFamilies().contains(TEST_COLUMN_FAMILY));
-        c.addColumnFamily(TEST_COLUMN_FAMILY);
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY));
         // now it does
         Assert.assertTrue(c.columnFamilies().contains(TEST_COLUMN_FAMILY));
-        c.deleteColumnFamily(TEST_COLUMN_FAMILY);
+        Assert.assertTrue(c.deleteColumnFamily(TEST_COLUMN_FAMILY));
         // shouldn't exist after deletion
         Assert.assertFalse(c.columnFamilies().contains(TEST_COLUMN_FAMILY));
     }
 
     @Test
+    public void addExistingColumnFamily() throws Exception {
+        Assert.assertTrue(addKeyspace());
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY));
+        Assert.assertFalse(c.addColumnFamily(TEST_COLUMN_FAMILY));
+    }
+
+    @Test
+    public void deleteNonExistingColumnFamily() throws Exception {
+        Assert.assertTrue(addKeyspace());
+        Assert.assertFalse(c.deleteColumnFamily(TEST_COLUMN_FAMILY));
+    }
+
+    @Test
     public void addGetDeleteRecord() throws Exception {
-        NodeConnection c = newInstance();
-        addKeyspace(c);
-        c.addColumnFamily(TEST_COLUMN_FAMILY);
+        Assert.assertTrue(addKeyspace());
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY));
         // record doesn't exist yet
         Assert.assertFalse(c.exists(TEST_COLUMN_FAMILY, TEST_RECORD));
         Map<String, String> columns = getColumns(1);
-        c.addRecord(TEST_COLUMN_FAMILY, TEST_RECORD, columns);
+        c.putRecord(TEST_COLUMN_FAMILY, TEST_RECORD, columns);
         // now it does
         Assert.assertTrue(c.exists(TEST_COLUMN_FAMILY, TEST_RECORD));
         // and it should have same data as input
@@ -100,18 +121,45 @@ public class NodeConnectionTest {
     }
 
     @Test
+    public void putExistingRecord() throws Exception {
+        Assert.assertTrue(addKeyspace());
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY));
+        Map<String, String> columns = getColumns(1);
+        c.putRecord(TEST_COLUMN_FAMILY, TEST_RECORD, columns);
+        columns.put("timesTwo", "huh");
+        columns.put("column3", "value3");
+        c.putRecord(TEST_COLUMN_FAMILY, TEST_RECORD, columns);
+        Map<String, String> outCols = c.getRecord(TEST_COLUMN_FAMILY, TEST_RECORD);
+        Assert.assertEquals(columns, outCols);
+    }
+
+    @Test
+    public void getNonExistingRecord() throws Exception {
+        Assert.assertTrue(addKeyspace());
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY));
+        Assert.assertNull(c.getRecord(TEST_COLUMN_FAMILY, TEST_RECORD));
+    }
+
+    @Test
+    public void deleteNonExistingRecord() throws Exception {
+        Assert.assertTrue(addKeyspace());
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY));
+        c.deleteRecord(TEST_COLUMN_FAMILY, TEST_RECORD);
+    }
+
+    @Test
     public void addGetDeleteFile() throws Exception {
-        NodeConnection c = newInstance();
-        addKeyspace(c);
-        c.addColumnFamily(TEST_COLUMN_FAMILY, "bytes");
+        Assert.assertTrue(addKeyspace());
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY, "bytes"));
         // file doesn't exist yet
         Assert.assertFalse(c.exists(TEST_COLUMN_FAMILY, TEST_FILE));
         String content = "Here's the content";
-        c.addFile(TEST_COLUMN_FAMILY, TEST_FILE, getStream(content), null);
+        c.putFile(TEST_COLUMN_FAMILY, TEST_FILE, getStream(content), null);
         // now it does
         Assert.assertTrue(c.exists(TEST_COLUMN_FAMILY, TEST_FILE));
         Assert.assertTrue(c.exists(TEST_COLUMN_FAMILY, TEST_FILE + "-chunk-0"));
         InputStream in = c.getFileContent(TEST_COLUMN_FAMILY, TEST_FILE);
+        Assert.assertNotNull(in);
         // what we get back should be exactly what we stored
         Assert.assertEquals(content, IOUtils.toString(in, CHAR_ENCODING));
         c.deleteFile(TEST_COLUMN_FAMILY, TEST_FILE);
@@ -142,14 +190,40 @@ public class NodeConnectionTest {
         Assert.assertFalse(c.exists(TEST_COLUMN_FAMILY, key + "-chunk-3"));
     }
 
+    @Test
+    public void putExistingFile() throws Exception {
+        Assert.assertTrue(addKeyspace());
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY, "bytes"));
+        c.putFile(TEST_COLUMN_FAMILY, TEST_FILE, getStream("a"), null);
+        c.putFile(TEST_COLUMN_FAMILY, TEST_FILE, getStream("b"), null);
+        InputStream in = c.getFileContent(TEST_COLUMN_FAMILY, TEST_FILE);
+        Assert.assertEquals("b", IOUtils.toString(in, CHAR_ENCODING));
+    }
+
+    @Test
+    public void getNonExistingFileContent() throws Exception {
+        Assert.assertTrue(addKeyspace());
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY));
+        Assert.assertNull(c.getFileContent(TEST_COLUMN_FAMILY, TEST_RECORD));
+    }
+
+    @Test
+    public void deleteNonExistingFile() throws Exception {
+        Assert.assertTrue(addKeyspace());
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY, "bytes"));
+        c.deleteFile(TEST_COLUMN_FAMILY, TEST_FILE);
+    }
+
     private void fileTest(Connection c, String key, long numBytes) throws Exception {
         StringBuilder s = new StringBuilder();
         for (int i = 0; i < numBytes; i++) {
             s.append('.');
         }
         String input = s.toString();
-        c.addFile(TEST_COLUMN_FAMILY, key, getStream(input), null);
-        String output = IOUtils.toString(c.getFileContent(TEST_COLUMN_FAMILY, key));
+        c.putFile(TEST_COLUMN_FAMILY, key, getStream(input), null);
+        InputStream in = c.getFileContent(TEST_COLUMN_FAMILY, key);
+        Assert.assertNotNull(in);
+        String output = IOUtils.toString(in, CHAR_ENCODING);
         Assert.assertEquals(input, output);
     }
 
@@ -157,56 +231,55 @@ public class NodeConnectionTest {
         try {
             return new ByteArrayInputStream(string.getBytes(CHAR_ENCODING));
         } catch (Exception wontHappen) {
-            throw new RuntimeException(wontHappen);
+            throw new FaultException(wontHappen);
         }
     }
 
     @Test
     public void iterateRecords() throws Exception {
-        NodeConnection c = newInstance();
-        addKeyspace(c);
-        c.addColumnFamily(TEST_COLUMN_FAMILY);
+        Assert.assertTrue(addKeyspace());
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY));
         Map<String, Map<String, String>> gotRecords;
-        gotRecords = getRecords(c, TEST_COLUMN_FAMILY, Integer.MAX_VALUE);
+        gotRecords = getRecords(Integer.MAX_VALUE, 0);
         // initially, no records should be iterated
         Assert.assertEquals(0, gotRecords.size());
         Map<String, Map<String, String>> addedRecords;
         addedRecords = addRecords(c, TEST_COLUMN_FAMILY, 1);
         Assert.assertEquals(1, addedRecords.size());
-        gotRecords = getRecords(c, TEST_COLUMN_FAMILY, Integer.MAX_VALUE);
+        gotRecords = getRecords(Integer.MAX_VALUE, 1);
         // then one...the one that was just added
         Assert.assertEquals(addedRecords, gotRecords);
         c.deleteRecord(TEST_COLUMN_FAMILY, "testRecord1");
-        gotRecords = getRecords(c, TEST_COLUMN_FAMILY, Integer.MAX_VALUE);
+        gotRecords = getRecords(Integer.MAX_VALUE, 0);
         // then none; it was just deleted
         Assert.assertEquals(0, gotRecords.size());
         int numRecords = RECORD_BATCH_SIZE * 2;
         addedRecords = addRecords(c, TEST_COLUMN_FAMILY, numRecords);
         Assert.assertEquals(numRecords, addedRecords.size());
-        gotRecords = getRecords(c, TEST_COLUMN_FAMILY, Integer.MAX_VALUE);
+        gotRecords = getRecords(Integer.MAX_VALUE, numRecords);
         // then a few...the ones just added
         Assert.assertEquals(addedRecords, gotRecords);
-        c.deleteColumnFamily(TEST_COLUMN_FAMILY);
-        c.addColumnFamily(TEST_COLUMN_FAMILY);
-        gotRecords = getRecords(c, TEST_COLUMN_FAMILY, Integer.MAX_VALUE);
+        Assert.assertTrue(c.deleteColumnFamily(TEST_COLUMN_FAMILY));
+        Assert.assertTrue(c.addColumnFamily(TEST_COLUMN_FAMILY));
+        gotRecords = getRecords(Integer.MAX_VALUE, 0);
         // then none; the column family was just deleted and re-added
         Assert.assertEquals(0, gotRecords.size());
         numRecords = RECORD_BATCH_SIZE * 4 + 2;
         addedRecords = addRecords(c, TEST_COLUMN_FAMILY, numRecords);
         Assert.assertEquals(numRecords, addedRecords.size());
-        gotRecords = getRecords(c, TEST_COLUMN_FAMILY, Integer.MAX_VALUE);
+        gotRecords = getRecords(Integer.MAX_VALUE, numRecords);
         // then more...the ones just added
         Assert.assertEquals(addedRecords, gotRecords);
         // then more, with a maximum of one less than what we inserted
         numRecords--;
-        gotRecords = getRecords(c, TEST_COLUMN_FAMILY, numRecords);
+        gotRecords = getRecords(numRecords, numRecords);
         Assert.assertEquals(numRecords, gotRecords.size());
     }
 
-    private static void addKeyspace(Connection c) {
+    private boolean addKeyspace() {
         Map<String, String> options = new HashMap<String, String>();
         options.put("replication_factor", "1");
-        c.addKeyspace(ReplicationStrategy.SIMPLE, options);
+        return c.addKeyspace(ReplicationStrategy.SIMPLE, options);
     }
 
     private static Map<String, Map<String, String>> addRecords(
@@ -217,7 +290,7 @@ public class NodeConnectionTest {
             int n = i + 1;
             String key = "testRecord" + n;
             Map<String, String> columns = getColumns(n);
-            c.addRecord(columnFamily, key, columns);
+            c.putRecord(columnFamily, key, columns);
             records.put(key, columns);
         }
         return records;
@@ -231,10 +304,9 @@ public class NodeConnectionTest {
         return columns;
     }
 
-    private static Map<String, Map<String, String>> getRecords(
-            Connection c, String columnFamily, int maxRecords) {
+    private Map<String, Map<String, String>> getRecords(int maxRecords, long expectedCount) {
         TestRecordFunction func = new TestRecordFunction(maxRecords);
-        c.forEachRecord(columnFamily, func);
+        Assert.assertEquals(expectedCount, c.forEachRecord(TEST_COLUMN_FAMILY, func));
         return func.getRecords();
     }
 

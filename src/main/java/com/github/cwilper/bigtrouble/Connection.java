@@ -21,14 +21,19 @@ public interface Connection {
      *
      * @param strategy the replication strategy to use.
      * @param options the strategy-specific options to use.
+     * @return <code>true</code> if the keyspace was successfully created;
+     *         <code>false</code> if it already existed.
      */
-    void addKeyspace(ReplicationStrategy strategy,
-                     Map<String, String> options);
+    boolean addKeyspace(ReplicationStrategy strategy,
+                        Map<String, String> options);
 
     /**
      * Deletes the keyspace and all data within.
+     *
+     * @return <code>true</code> if the keyspace was successfully deleted;
+     *         <code>false</code> if it didn't exist in the first place.
      */
-    void deleteKeyspace();
+    boolean deleteKeyspace();
 
     /**
      * Gets all column family names in this keyspace.
@@ -48,18 +53,22 @@ public interface Connection {
      * @param name the name of the column family.
      * @param binaryColumns the names of any columns that should have a
      *        BytesType validation class instead of the default, UTF8Type.
+     * @return <code>true</code> if the column family was successfully created;
+     *         <code>false</code> if it already existed.
      */
-    void addColumnFamily(String name, String... binaryColumns);
+    boolean addColumnFamily(String name, String... binaryColumns);
 
     /**
      * Deletes a column family and all data within.
      *
      * @param name the name of the column family.
+     * @return <code>true</code> if the column family was successfully deleted;
+     *         <code>false</code> if it didn't exist in the first place.
      */
-    void deleteColumnFamily(String name);
+    boolean deleteColumnFamily(String name);
 
     /**
-     * Adds a file.
+     * Adds or replaces a file.
      *
      * @param columnFamily the column family in which to store the file.
      * @param key the unique id of the file within the column family.
@@ -68,7 +77,7 @@ public interface Connection {
      * @param columns zero or more name-value pairs that describe the content
      *        (may be given as <code>null</code>).
      */
-    void addFile(String columnFamily, String key, InputStream in,
+    void putFile(String columnFamily, String key, InputStream in,
             Map<String, String> columns);
 
     /**
@@ -82,7 +91,7 @@ public interface Connection {
     InputStream getFileContent(String columnFamily, String key);
 
     /**
-     * Deletes a file.
+     * Deletes a file. If the file doesn't exist, this is a no-op.
      *
      * @param columnFamily the column family in which the file is stored.
      * @param key the unique id of the file within the column family.
@@ -90,13 +99,13 @@ public interface Connection {
     void deleteFile(String columnFamily, String key);
 
     /**
-     * Adds a record.
+     * Adds or replaces a record.
      *
      * @param columnFamily the column family in which to store the record.
      * @param key the unique id of the record within the column family.
      * @param columns one or more name-value pairs that comprise the record.
      */
-    void addRecord(String columnFamily, String key, Map<String, String> columns);
+    void putRecord(String columnFamily, String key, Map<String, String> columns);
 
     /**
      * Gets a record.
@@ -115,11 +124,12 @@ public interface Connection {
      *
      * @param columnFamily the column family whose records should be iterated.
      * @param function the function to execute.
+     * @return the number of records iterated.
      */
-    void forEachRecord(String columnFamily, RecordFunction function);
+    long forEachRecord(String columnFamily, RecordFunction function);
 
     /**
-     * Deletes a record.
+     * Deletes a record. If the record doesn't exist, this is a no-op.
      *
      * @param columnFamily the column family in which the record is stored.
      * @param key the unique id of the record within the column family.
@@ -131,12 +141,14 @@ public interface Connection {
      *
      * @param columnFamily the column family in which to look.
      * @param key the unique id of the record or file within the column family.
-     * @return true if it exists, false otherwise.
+     * @return <code>true</code> if it exists, <code>false</code> otherwise.
      */
     boolean exists(String columnFamily, String key);
 
     /**
-     * Releases any resources held by this connection.
+     * Releases any resources held by this connection. Multiple calls to
+     * this method are ok; after the first call, subsequent
+     * <code>close()</code> requests have no effect.
      */
     void close();
 

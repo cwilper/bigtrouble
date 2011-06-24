@@ -11,6 +11,7 @@ import org.apache.cassandra.thrift.ColumnDef;
 import org.apache.cassandra.thrift.ColumnOrSuperColumn;
 import org.apache.cassandra.thrift.ColumnParent;
 import org.apache.cassandra.thrift.ColumnPath;
+import org.apache.cassandra.thrift.InvalidRequestException;
 import org.apache.cassandra.thrift.KeyRange;
 import org.apache.cassandra.thrift.KeySlice;
 import org.apache.cassandra.thrift.KsDef;
@@ -22,6 +23,7 @@ import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.transport.TFramedTransport;
 import org.apache.thrift.transport.TSocket;
 import org.apache.thrift.transport.TTransport;
+import org.apache.thrift.transport.TTransportException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,6 +65,8 @@ public class NodeConnection implements Connection {
 
     private boolean keyspaceIsSet = false;
 
+    private boolean closed = false;
+
     /**
      * Creates a connection.
      *
@@ -98,7 +102,7 @@ public class NodeConnection implements Connection {
         } catch (AuthorizationException e) {
             throw new LoginException(e);
         } catch (TException e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         }
     }
 
@@ -130,13 +134,13 @@ public class NodeConnection implements Connection {
             }
             return set;
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         }
     }
 
     @Override
-    public void addKeyspace(ReplicationStrategy strategy,
-                            Map<String, String> options) {
+    public boolean addKeyspace(ReplicationStrategy strategy,
+                               Map<String, String> options) {
         logger.trace("Adding keyspace");
         KsDef def = new KsDef();
         def.setStrategy_class(strategy.getClassName());
@@ -147,18 +151,30 @@ public class NodeConnection implements Connection {
         }
         try {
             client.system_add_keyspace(def);
+            return true;
+        } catch (InvalidRequestException e) {
+            if (e.getWhy().indexOf("already exists") != -1) {
+                return false;
+            }
+            throw new FaultException(e);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         }
     }
 
     @Override
-    public void deleteKeyspace() {
+    public boolean deleteKeyspace() {
         logger.trace("Deleting keyspace");
         try {
             client.system_drop_keyspace(config.getKeyspace());
+            return true;
+        } catch (InvalidRequestException e) {
+            if (e.getWhy().indexOf("does not exist") != -1) {
+                return false;
+            }
+            throw new FaultException(e);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         }
     }
 
@@ -174,12 +190,12 @@ public class NodeConnection implements Connection {
             }
             return set;
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         }
     }
 
     @Override
-    public void addColumnFamily(String name, String... binaryColumns) {
+    public boolean addColumnFamily(String name, String... binaryColumns) {
         logger.trace("Adding column family: {}", name);
         setKeyspace();
         CfDef cfDef = new CfDef();
@@ -200,27 +216,42 @@ public class NodeConnection implements Connection {
                 cfDef.setColumn_metadata(cDefs);
             }
             client.system_add_column_family(cfDef);
+            return true;
+        } catch (InvalidRequestException e) {
+            if (e.getWhy().indexOf("already exists") != -1) {
+                return false;
+            }
+            throw new FaultException(e);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         }
     }
 
     @Override
-    public void deleteColumnFamily(String name) {
+    public boolean deleteColumnFamily(String name) {
         logger.trace("Deleting column family: {}", name);
         setKeyspace();
         try {
             client.system_drop_column_family(name);
+            return true;
+        } catch (InvalidRequestException e) {
+            if (e.getWhy().indexOf("not defined") != -1) {
+                return false;
+            }
+            throw new FaultException(e);
         } catch (Exception e) {
-            throw new RuntimeException();
+            throw new FaultException(e);
         }
     }
 
     @Override
-    public void addFile(String columnFamily, String key, InputStream in,
+    public void putFile(String columnFamily, String key, InputStream in,
                         Map<String, String> columns) {
-        logger.trace("Adding file: {} to column family: {}", key, columnFamily);
+        logger.trace("Putting file: {} in column family: {}", key, columnFamily);
         setKeyspace();
+        if (exists(columnFamily, key)) {
+            deleteFile(columnFamily, key);
+        }
         if (columns == null) {
             columns = new HashMap<String, String>();
         }
@@ -251,9 +282,9 @@ public class NodeConnection implements Connection {
             // then add a row for file metadata
             columns.put("byteCount", "" + byteCount);
             columns.put("chunkSize", "" + config.getFileChunkSize());
-            addRecord(columnFamily, key, columns);
+            putRecord(columnFamily, key, columns);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         } finally{
             IOUtils.closeQuietly(in);
         }
@@ -263,7 +294,11 @@ public class NodeConnection implements Connection {
     public InputStream getFileContent(final String columnFamily, final String key) {
         logger.trace("Getting file: {} from column family: {}", key, columnFamily);
         setKeyspace();
-        final long chunkCount = getFileInfo(columnFamily, key)[2];
+        long[] info = getFileInfo(columnFamily, key);
+        if (info == null) {
+            return null;
+        }
+        final long chunkCount = info[2];
         return new ChunkedInputStream(new AbstractSource<byte[]>() {
             private long chunkNum;
             @Override
@@ -289,7 +324,7 @@ public class NodeConnection implements Connection {
                     path, config.getReadConsistency().getConsistencyLevel());
             return result.getColumn();
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         }
     }
 
@@ -297,8 +332,11 @@ public class NodeConnection implements Connection {
     public void deleteFile(String columnFamily, String key) {
         logger.trace("Deleting file: {} from column family: {}", key, columnFamily);
         setKeyspace();
-        long[] fileInfo = getFileInfo(columnFamily, key);
-        for (int i = 0; i < fileInfo[2]; i++) {
+        long[] info = getFileInfo(columnFamily, key);
+        if (info == null) {
+            return;
+        }
+        for (int i = 0; i < info[2]; i++) {
             deleteRecord(columnFamily, key + "-chunk-" + i);
         }
         deleteRecord(columnFamily, key);
@@ -307,6 +345,9 @@ public class NodeConnection implements Connection {
     // [0] = byteCount, [1] = chunkSize, [2] = chunkCount
     private long[] getFileInfo(String columnFamily, String key) {
         Map<String, String> columns = getRecord(columnFamily, key);
+        if (columns == null) {
+            return null;
+        }
         long byteCount = Long.parseLong(columns.get("byteCount"));
         long chunkSize = Long.parseLong(columns.get("chunkSize"));
         long chunkCount = byteCount / chunkSize;
@@ -317,8 +358,8 @@ public class NodeConnection implements Connection {
     }
 
     @Override
-    public void addRecord(String columnFamily, String key, Map<String, String> columns) {
-        logger.trace("Adding record: {} to column family: {}", key, columnFamily);
+    public void putRecord(String columnFamily, String key, Map<String, String> columns) {
+        logger.trace("Putting record: {} in column family: {}", key, columnFamily);
         setKeyspace();
         ByteBuffer keyBuf = buffer(key);
         long timestamp = System.currentTimeMillis();
@@ -331,7 +372,7 @@ public class NodeConnection implements Connection {
                 client.insert(keyBuf, parent(columnFamily), column,
                         config.getWriteConsistency().getConsistencyLevel());
             } catch (Exception e) {
-                throw new RuntimeException(e);
+                throw new FaultException(e);
             }
         }
     }
@@ -345,7 +386,7 @@ public class NodeConnection implements Connection {
                     buffer(key), parent(columnFamily), ALL_COLUMNS,
                     config.getReadConsistency().getConsistencyLevel()));
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         }
     }
 
@@ -355,13 +396,17 @@ public class NodeConnection implements Connection {
             Column column = c.getColumn();
             map.put(string(column.getName()), string(column.getValue()));
         }
+        if (map.isEmpty()) {
+            return null;
+        }
         return map;
     }
 
     @Override
-    public void forEachRecord(String columnFamily, RecordFunction function) {
+    public long forEachRecord(String columnFamily, RecordFunction function) {
         logger.trace("Iterating records in column family: {}", columnFamily);
         setKeyspace();
+        long count = 0;
         try {
             List<KeySlice> list;
             String lastKey = "";
@@ -384,13 +429,15 @@ public class NodeConnection implements Connection {
                             List<ColumnOrSuperColumn> columns = keySlice.getColumns();
                             if (columns.size() > 0) { // skip deleted rows
                                 doNext = function.execute(lastKey, map(columns));
+                                count++;
                             }
                         }
                     }
                 }
             } while (list.size() > 1 && doNext);
+            return count;
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         }
     }
 
@@ -403,7 +450,7 @@ public class NodeConnection implements Connection {
                     buffer(key), parent(columnFamily), ALL_COLUMNS,
                     config.getReadConsistency().getConsistencyLevel()) > 0;
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         }
     }
 
@@ -417,7 +464,7 @@ public class NodeConnection implements Connection {
                     System.currentTimeMillis(),
                     config.getWriteConsistency().getConsistencyLevel());
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new FaultException(e);
         }
     }
 
@@ -425,12 +472,15 @@ public class NodeConnection implements Connection {
     @PreDestroy
     public void close() {
         logger.trace("Closing");
-        try {
-            transport.flush();
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            transport.close();
+        if (!closed) {
+            closed = true;
+            try {
+                transport.flush();
+            } catch (TTransportException e) {
+                logger.error("Error flushing transport", e);
+            } finally {
+                transport.close();
+            }
         }
     }
 
@@ -439,7 +489,7 @@ public class NodeConnection implements Connection {
             try {
                 client.set_keyspace(config.getKeyspace());
             } catch (Exception e) {
-                throw new RuntimeException(e);
+                throw new FaultException(e);
             }
             keyspaceIsSet = true;
         }
@@ -449,7 +499,7 @@ public class NodeConnection implements Connection {
         try {
             return ByteBuffer.wrap(value.getBytes("UTF-8"));
         } catch (UnsupportedEncodingException wontHappen) {
-            throw new RuntimeException(wontHappen);
+            throw new FaultException(wontHappen);
         }
     }
 
@@ -457,7 +507,7 @@ public class NodeConnection implements Connection {
         try {
             return new String(bytes, "UTF-8");
         } catch (UnsupportedEncodingException wontHappen) {
-            throw new RuntimeException(wontHappen);
+            throw new FaultException(wontHappen);
         }
     }
 
